@@ -16,8 +16,9 @@ import {
 	CountryCode,
 	Deposit,
 	Money,
+	Order,
 	OrderCardRequest,
-	OrderDetails,
+	OrderWithExtraInfo,
 	Quote,
 	Receipt,
 	Recipient,
@@ -167,6 +168,32 @@ export class ZebecCardAPIService {
 			throw e;
 		}
 	}
+
+	async fetchOrders(params: { queryParams: "email" | "txHash" | "orderId"; queryValue: string }) {
+		const method = "GET";
+		const path = "/orders/lookup";
+		const headers = this.generateRequestHeaders(method, path);
+
+		const urlParams = new URLSearchParams({
+			[params.queryParams]: params.queryValue,
+		});
+
+		const url = `${path}?${urlParams}`;
+
+		try {
+			const { data } = await this.api.get(url, {
+				headers,
+			});
+
+			return data;
+		} catch (e) {
+			if (axios.isAxiosError(e)) {
+				console.debug("cause", e.cause);
+				console.debug("response data", e.response?.data);
+			}
+			throw e;
+		}
+	}
 }
 
 export class ZebecCardEvmService {
@@ -227,7 +254,7 @@ export class ZebecCardEvmService {
 		cardProgramId: string;
 		recipient: Recipient;
 		overrides?: ethers.Overrides;
-	}): Promise<{ receipt: ethers.ContractTransactionReceipt; orderDetails: OrderDetails }> {
+	}): Promise<{ receipt: ethers.ContractTransactionReceipt; orderDetail: OrderWithExtraInfo }> {
 		const { quote } = params;
 		// Check card service status
 		await this.apiService.ping();
@@ -370,11 +397,11 @@ export class ZebecCardEvmService {
 				const response = await this.apiService.purchaseCard(payload);
 				console.debug("API response: %o \n", response);
 
-				const data = response.data as OrderDetails;
+				const data = response.data as OrderWithExtraInfo;
 
 				return {
 					receipt: buyCardReceipt,
-					orderDetails: data,
+					orderDetail: data,
 				};
 			} catch (error) {
 				if (error instanceof AxiosError) {
@@ -395,5 +422,17 @@ export class ZebecCardEvmService {
 		}
 
 		throw new Error("Max retries reached");
+	}
+
+	async getOrdersByEmail(email: string): Promise<Order[]> {
+		return this.apiService.fetchOrders({ queryParams: "email", queryValue: email });
+	}
+
+	async getOrdersByTxHash(txHash: string): Promise<Order> {
+		return this.apiService.fetchOrders({ queryParams: "txHash", queryValue: txHash });
+	}
+
+	async getOrdersByOrderId(orderId: string): Promise<Order> {
+		return this.apiService.fetchOrders({ queryParams: "orderId", queryValue: orderId });
 	}
 }

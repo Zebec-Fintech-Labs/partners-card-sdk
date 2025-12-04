@@ -54,7 +54,7 @@ export type Vault = {
 	};
 };
 
-export type OrderDetails = {
+export type Order = {
 	id: string;
 	createdAt: Date;
 	updatedAt: Date;
@@ -81,6 +81,9 @@ export type OrderDetails = {
 	chainName: string;
 	status: "PENDING" | "PROCESSING" | "COMPLETED" | "FAILED" | "CANCELLED";
 	cardName: string;
+};
+
+export type OrderWithExtraInfo = Order & {
 	date: string;
 	retryCount: number;
 	lastRetryAttempt: string | null;
