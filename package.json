@@ -1,0 +1,53 @@
+{
+	"name": "@zebec-fintech/partners-card-sdk",
+	"version": "1.0.0",
+	"description": "An sdk for purchasing silver card in zebec",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"author": "Ashish Sapkota",
+	"license": "MIT",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "npm run clean && tsc",
+		"clean": "rimraf dist",
+		"format": "prettier --write .",
+		"test": "ts-mocha -p ./tsconfig.json -t 1000000",
+		"gen:typechain": "typechain --target ethers-v6 --out-dir \"src/artifacts/typechain-types\" \"src/artifacts/abi/*.json\""
+	},
+	"devDependencies": {
+		"@typechain/ethers-v6": "^0.5.1",
+		"@types/jsonwebtoken": "^9.0.10",
+		"@types/mocha": "^10.0.10",
+		"@types/node": "^24.10.1",
+		"dotenv": "^17.2.3",
+		"mocha": "^11.7.5",
+		"prettier": "^3.7.3",
+		"rimraf": "^6.1.2",
+		"ts-mocha": "^11.1.0",
+		"ts-node": "^10.9.2",
+		"typechain": "^8.3.2",
+		"typescript": "^5.9.3"
+	},
+	"dependencies": {
+		"@polkadot/api": "^16.5.3",
+		"@polkadot/types": "^16.5.3",
+		"@polkadot/util": "^13.5.9",
+		"axios": "^1.13.2",
+		"ethers": "^6.15.0"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Zebec-Fintech-Labs/zebec-card-minimal-sdk.git"
+	},
+	"homepage": "https://github.com/Zebec-Fintech-Labs/zebec-card-minimal-sdk.git#README",
+	"keywords": [
+		"zebec",
+		"zebec fintech",
+		"zebec instant card"
+	],
+	"publishConfig": {
+		"access": "public"
+	}
+}
