@@ -1,5 +1,5 @@
 {
-	"name": "@zebec-fintech/partners-card-sdk",
+	"name": "@zebec-network/partners-card-sdk",
 	"version": "1.0.0",
 	"description": "An sdk for purchasing silver card in zebec",
 	"main": "dist/index.js",
@@ -31,9 +31,6 @@
 		"typescript": "^5.9.3"
 	},
 	"dependencies": {
-		"@polkadot/api": "^16.5.3",
-		"@polkadot/types": "^16.5.3",
-		"@polkadot/util": "^13.5.9",
 		"axios": "^1.13.2",
 		"ethers": "^6.15.0"
 	},
