@@ -7,7 +7,7 @@ import { getProvider, getSigners } from "./setup";
 
 dotenv.config();
 
-describe("purchaseCard()", () => {
+describe("ZebecCardEvmService", () => {
 	const provider = getProvider("sepolia");
 	const signer = getSigners(provider)[1];
 	console.log("user:", signer.address);
@@ -28,49 +28,78 @@ describe("purchaseCard()", () => {
 		},
 	);
 
-	it("order card from that usdc", async () => {
-		const participantId = "JohnChamling";
-		const firstName = "John";
-		const lastName = "Chamling";
-		const emailAddress = "johnchamling@gmail.com";
-		const mobilePhone = "9876543210";
-		const language = "en-US";
-		const city = "Bharatpur";
-		const state = "Bagmati";
-		const postalCode = "44200";
-		const countryCode: CountryCode = "NPL";
-		const address1 = "Shittal street, Bharatpur - 10, Chitwan";
+	describe("purchaseCard()", () => {
+		it("order card from that usdc", async () => {
+			const participantId = "JohnChamling";
+			const firstName = "John";
+			const lastName = "Chamling";
+			const emailAddress = "johnchamling@gmail.com";
+			const mobilePhone = "9876543210";
+			const language = "en-US";
+			const city = "Bharatpur";
+			const state = "Bagmati";
+			const postalCode = "44200";
+			const countryCode: CountryCode = "NPL";
+			const address1 = "Shittal street, Bharatpur - 10, Chitwan";
 
-		const amount = "10";
-		const recipient = Recipient.create(
-			participantId,
-			firstName,
-			lastName,
-			emailAddress,
-			mobilePhone,
-			language,
-			city,
-			state,
-			postalCode,
-			countryCode,
-			address1,
-		);
+			const amount = "10";
+			const recipient = Recipient.create(
+				participantId,
+				firstName,
+				lastName,
+				emailAddress,
+				mobilePhone,
+				language,
+				city,
+				state,
+				postalCode,
+				countryCode,
+				address1,
+			);
 
-		const programWithDetails = await service.fetchZebecCardProgram(countryCode);
-		assert(programWithDetails.availablePrograms.length);
+			const programWithDetails = await service.fetchZebecCardProgram(countryCode);
+			assert(programWithDetails.availablePrograms.length);
 
-		const cardProgramId = programWithDetails.availablePrograms[0].id;
+			const cardProgramId = programWithDetails.availablePrograms[0].id;
 
-		const quote = await service.fetchQuote(amount);
-		console.log("quote:", quote);
-		const { orderDetails, receipt } = await service.purchaseCardWithUsdc({
-			amount,
-			cardProgramId,
-			recipient,
-			quote,
+			const quote = await service.fetchQuote(amount);
+			console.log("quote:", quote);
+			const { orderDetail, receipt } = await service.purchaseCardWithUsdc({
+				amount,
+				cardProgramId,
+				recipient,
+				quote,
+			});
+
+			console.log("receipt:", receipt.hash);
+			console.log("order detail:", orderDetail);
 		});
+	});
 
-		console.log("receipt:", receipt.hash);
-		console.log("order details:", orderDetails);
+	describe('"getOrdersByEmail()"', () => {
+		it.only("should fetch orders belonging to email", async () => {
+			const emailAddress = "johnchamling@gmail.com";
+			const orders = await service.getOrdersByEmail(emailAddress);
+
+			console.log("Orders:", orders);
+		});
+	});
+
+	describe('"getOrdersByTxHash()"', () => {
+		it.only("should fetch order for txHash", async () => {
+			const txHash = "0x03f8e147e871c449b26067e4d1b65ba75e01750d9c074c3494ac470d5f8b261e";
+			const orders = await service.getOrdersByTxHash(txHash);
+
+			console.log("Orders:", orders);
+		});
+	});
+
+	describe('"getOrdersByOrderId()"', () => {
+		it.only("should fetch order by orderId", async () => {
+			const orderId = "733d293e-fd7d-4df1-8200-6986885aa9de";
+			const orders = await service.getOrdersByOrderId(orderId);
+
+			console.log("Orders:", orders);
+		});
 	});
 });
