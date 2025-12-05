@@ -9,7 +9,7 @@ The Zebec Card SDK allows developers to integrate the functionality of purchasin
 Install the Zebec Card SDK via npm:
 
 ```bash
-npm i @zebec-fintech/partners-card-sdk
+npm i @zebec-network/partners-card-sdk
 ```
 
 ---
