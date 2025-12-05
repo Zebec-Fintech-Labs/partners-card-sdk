@@ -77,7 +77,7 @@ describe("ZebecCardEvmService", () => {
 	});
 
 	describe('"getOrdersByEmail()"', () => {
-		it.only("should fetch orders belonging to email", async () => {
+		it("should fetch orders belonging to email", async () => {
 			const emailAddress = "johnchamling@gmail.com";
 			const orders = await service.getOrdersByEmail(emailAddress);
 
@@ -86,7 +86,7 @@ describe("ZebecCardEvmService", () => {
 	});
 
 	describe('"getOrdersByTxHash()"', () => {
-		it.only("should fetch order for txHash", async () => {
+		it("should fetch order for txHash", async () => {
 			const txHash = "0x03f8e147e871c449b26067e4d1b65ba75e01750d9c074c3494ac470d5f8b261e";
 			const orders = await service.getOrdersByTxHash(txHash);
 
@@ -95,7 +95,7 @@ describe("ZebecCardEvmService", () => {
 	});
 
 	describe('"getOrdersByOrderId()"', () => {
-		it.only("should fetch order by orderId", async () => {
+		it("should fetch order by orderId", async () => {
 			const orderId = "733d293e-fd7d-4df1-8200-6986885aa9de";
 			const orders = await service.getOrdersByOrderId(orderId);
 

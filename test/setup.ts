@@ -1,4 +1,4 @@
-import { Keyring } from "@polkadot/api";
+// import { Keyring } from "@polkadot/api";
 import assert from "assert";
 import dotenv from "dotenv";
 import { ethers } from "ethers";
@@ -50,13 +50,13 @@ export function getSigners(provider: ethers.Provider) {
 	return signers;
 }
 
-export function getTAOSigner() {
-	dotenv.config();
-	const mnemonic = process.env.TAO_MNEMONIC;
-	assert(mnemonic, "Missing env var TAO_MNEMONIC");
+// export function getTAOSigner() {
+// 	dotenv.config();
+// 	const mnemonic = process.env.TAO_MNEMONIC;
+// 	assert(mnemonic, "Missing env var TAO_MNEMONIC");
 
-	const keyring = new Keyring({ type: "sr25519" });
-	const keypair = keyring.addFromUri(mnemonic);
+// 	const keyring = new Keyring({ type: "sr25519" });
+// 	const keypair = keyring.addFromUri(mnemonic);
 
-	return keypair;
-}
+// 	return keypair;
+// }
