@@ -98,7 +98,11 @@ export class ZebecCardAPIService {
 		try {
 			await this.api.get("/ping");
 			return true;
-		} catch (error) {
+		} catch (e) {
+			if (axios.isAxiosError(e)) {
+				console.debug("cause", e.cause);
+				console.debug("response data", e.response?.data);
+			}
 			throw new Error("Card service is down. Please try again later.");
 		}
 	}
@@ -129,20 +133,34 @@ export class ZebecCardAPIService {
 		amount: string | number,
 		type: "EXACT_IN" | "EXACT_OUT" = "EXACT_OUT",
 	) {
-		const url = `/exchange/quotes/${symbol.toString()}_USD/${formatAmount(amount)}?type=${type}`;
-		// console.debug({ url });
-		const { data } = await this.api.get(url);
+		try {
+			const url = `/exchange/quotes/${symbol.toString()}_USD/${formatAmount(amount)}?type=${type}`;
+			const { data } = await this.api.get(url);
 
-		return {
-			...data,
-			timestamp: new Date(data.timestamp),
-		} as Quote;
+			return {
+				...data,
+				timestamp: new Date(data.timestamp),
+			} as Quote;
+		} catch (e) {
+			if (axios.isAxiosError(e)) {
+				console.debug("cause", e.cause);
+				console.debug("response data", e.response?.data);
+			}
+			throw e;
+		}
 	}
 
 	async fetchVault(symbol: string) {
-		const { data } = await this.api.get(`/exchange/vault/${symbol.toLowerCase()}`);
-
-		return data as Vault;
+		try {
+			const { data } = await this.api.get(`/exchange/vault/${symbol.toLowerCase()}`);
+			return data as Vault;
+		} catch (e) {
+			if (axios.isAxiosError(e)) {
+				console.debug("cause", e.cause);
+				console.debug("response data", e.response?.data);
+			}
+			throw e;
+		}
 	}
 
 	async fetchZebecCardPrograms(countryCode: CountryCode) {
@@ -395,7 +413,7 @@ export class ZebecCardEvmService {
 		while (retries < maxRetries) {
 			try {
 				const response = await this.apiService.purchaseCard(payload);
-				console.debug("API response: %o \n", response);
+				console.debug("API response: %o \n", response.data);
 
 				const data = response.data as OrderWithExtraInfo;
 
@@ -405,10 +423,10 @@ export class ZebecCardEvmService {
 				};
 			} catch (error) {
 				if (error instanceof AxiosError) {
-					console.debug("error", error.response?.data);
-					console.debug("error", error.message);
+					console.debug("error:", error.response?.data);
+					console.debug("error:", error.message);
 				} else {
-					console.debug("error", error);
+					console.debug("error:", error);
 				}
 				if (retries >= maxRetries) {
 					throw error;

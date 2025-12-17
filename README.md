@@ -53,7 +53,7 @@ const service = new ZebecCardEvmService(
 
 The `fetchQuote` method retrieves a quote for the specified amount in USD. The quote is used to calculate the corresponding token amount required for the card purchase. It expires in about 30 seconds.
 
-Note: The `fetchQuote` method should be called regularly. Make sure to check it's validity before proceeding with the purchase.
+> **Note**: The `fetchQuote` method should be called regularly. Make sure to check it's validity before proceeding with the purchase.
 
 ```typescript
 const amount = "150.55"; // Amount in USD
@@ -132,7 +132,7 @@ const cardProgramId = programWithDetails.availablePrograms[0].id;
 
 const quote = await service.fetchQuote(amount);
 console.log("quote:", quote);
-const { orderDetails, receipt } = await service.purchaseCardWithUsdc({
+const { orderDetail, receipt } = await service.purchaseCardWithUsdc({
  amount,
  cardProgramId,
  recipient,
@@ -154,7 +154,7 @@ The `purchaseCardWithUsdc` method in ZebecCardEvmService returns an object repon
 
 ### ZebecCardEvmService
 
-To create an instance of `ZebecCardService`, you need:
+To create an instance of `ZebecCardEvmService`, you need:
 
 - **signer**: An instance of `ethers.Signer`.
 - **chainId**: The ID of the blockchain (see list of supported chains below).
