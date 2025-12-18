@@ -37,6 +37,7 @@ export class ZebecCardAPIService {
 	};
 	private readonly sdkVersion: string = "1.0.0";
 	private readonly api: axios.AxiosInstance;
+	private readonly sandbox: boolean = false;
 
 	constructor(apiConfig: APIConfig, sandbox?: boolean) {
 		this.apiConfig = {
@@ -47,6 +48,7 @@ export class ZebecCardAPIService {
 		this.api = axios.create({
 			baseURL: this.apiConfig.apiUrl,
 		});
+		this.sandbox = sandbox ? sandbox : false;
 	}
 
 	// Generate request signature
@@ -99,9 +101,13 @@ export class ZebecCardAPIService {
 			await this.api.get("/ping");
 			return true;
 		} catch (e) {
-			if (axios.isAxiosError(e)) {
-				console.debug("cause", e.cause);
-				console.debug("response data", e.response?.data);
+			if (this.sandbox) {
+				if (axios.isAxiosError(e)) {
+					console.debug("cause", e.cause);
+					console.debug("response data", e.response?.data);
+				} else {
+					console.debug("error", e);
+				}
 			}
 			throw new Error("Card service is down. Please try again later.");
 		}
@@ -142,9 +148,13 @@ export class ZebecCardAPIService {
 				timestamp: new Date(data.timestamp),
 			} as Quote;
 		} catch (e) {
-			if (axios.isAxiosError(e)) {
-				console.debug("cause", e.cause);
-				console.debug("response data", e.response?.data);
+			if (this.sandbox) {
+				if (axios.isAxiosError(e)) {
+					console.debug("cause", e.cause);
+					console.debug("response data", e.response?.data);
+				} else {
+					console.debug("error", e);
+				}
 			}
 			throw e;
 		}
@@ -155,9 +165,13 @@ export class ZebecCardAPIService {
 			const { data } = await this.api.get(`/exchange/vault/${symbol.toLowerCase()}`);
 			return data as Vault;
 		} catch (e) {
-			if (axios.isAxiosError(e)) {
-				console.debug("cause", e.cause);
-				console.debug("response data", e.response?.data);
+			if (this.sandbox) {
+				if (axios.isAxiosError(e)) {
+					console.debug("cause", e.cause);
+					console.debug("response data", e.response?.data);
+				} else {
+					console.debug("error", e);
+				}
 			}
 			throw e;
 		}
@@ -179,9 +193,13 @@ export class ZebecCardAPIService {
 
 			return data as CardProgramWithUserRegion;
 		} catch (e) {
-			if (axios.isAxiosError(e)) {
-				console.debug("cause", e.cause);
-				console.debug("response data", e.response?.data);
+			if (this.sandbox) {
+				if (axios.isAxiosError(e)) {
+					console.debug("cause", e.cause);
+					console.debug("response data", e.response?.data);
+				} else {
+					console.debug("error", e);
+				}
 			}
 			throw e;
 		}
@@ -205,9 +223,13 @@ export class ZebecCardAPIService {
 
 			return data;
 		} catch (e) {
-			if (axios.isAxiosError(e)) {
-				console.debug("cause", e.cause);
-				console.debug("response data", e.response?.data);
+			if (this.sandbox) {
+				if (axios.isAxiosError(e)) {
+					console.debug("cause", e.cause);
+					console.debug("response data", e.response?.data);
+				} else {
+					console.debug("error", e);
+				}
 			}
 			throw e;
 		}
@@ -219,6 +241,7 @@ export class ZebecCardEvmService {
 	readonly usdcToken: ERC20;
 	readonly chainId: SupportedEvmChain;
 	private readonly apiService: ZebecCardAPIService;
+	private readonly sandbox: boolean = false;
 
 	constructor(
 		readonly signer: ethers.Signer,
@@ -228,14 +251,14 @@ export class ZebecCardEvmService {
 			sandbox?: boolean;
 		},
 	) {
-		const sandbox = sdkOptions?.sandbox ? sdkOptions.sandbox : false;
+		this.sandbox = sdkOptions?.sandbox ? sdkOptions.sandbox : false;
 
 		const isTesnetChainId = TESTNET_CHAINIDS.includes(chainId);
-		if ((sandbox && !isTesnetChainId) || (!sandbox && isTesnetChainId)) {
+		if ((this.sandbox && !isTesnetChainId) || (!this.sandbox && isTesnetChainId)) {
 			throw new Error("Only testnet chains are allowed in sandbox environment");
 		}
 
-		this.apiService = new ZebecCardAPIService(apiConfig, sandbox);
+		this.apiService = new ZebecCardAPIService(apiConfig, this.sandbox);
 
 		this.chainId = parseSupportedChain(chainId);
 
@@ -315,7 +338,9 @@ export class ZebecCardEvmService {
 		const parsedAmount = ethers.parseUnits(quote.totalPrice.toString(), decimals);
 
 		const usdcBalance = await this.usdcToken.balanceOf(this.signer);
-		console.debug("Usdc Balance:", usdcBalance);
+		if (this.sandbox) {
+			console.debug("Usdc Balance:", usdcBalance);
+		}
 
 		if (parsedAmount > usdcBalance) {
 			throw new NotEnoughBalanceError(
@@ -354,13 +379,19 @@ export class ZebecCardEvmService {
 		}
 
 		const allowance = await this.usdcToken.allowance(this.signer, this.zebecCard);
-		console.debug("Allowance:", allowance);
+		if (this.sandbox) {
+			console.debug("Allowance:", allowance);
+		}
 
 		if (allowance < parsedAmount) {
-			console.debug("===== Approving token =====");
+			if (this.sandbox) {
+				console.debug("===== Approving token =====");
+			}
 			const approveResponse = await this.usdcToken.approve(this.zebecCard, parsedAmount);
 			const approveReceipt = await approveResponse.wait();
-			console.debug("Approve hash: %s \n", approveReceipt?.hash);
+			if (this.sandbox) {
+				console.debug("Approve hash: %s \n", approveReceipt?.hash);
+			}
 		}
 		const cardType = cardProgram.type === "carbon" ? "reloadable" : "non_reloadable";
 		const emailHash = hashSHA256(params.recipient.emailAddress);
@@ -370,7 +401,9 @@ export class ZebecCardEvmService {
 			gasLimit: params.overrides?.gasLimit || DEFAULT_GAS_LIMIT, // Default
 		};
 
-		console.debug("===== Purchasing Card =====");
+		if (this.sandbox) {
+			console.debug("===== Purchasing Card =====");
+		}
 		const buyCardResponse = await this.zebecCard.buyCardDirect(
 			parsedAmount,
 			cardType,
@@ -381,8 +414,9 @@ export class ZebecCardEvmService {
 		if (!buyCardReceipt) {
 			throw new Error(`Could not get tx receipt for tx: ${buyCardResponse.hash}`);
 		}
-		console.debug("Purchase hash: %s \n", buyCardReceipt.hash);
-
+		if (this.sandbox) {
+			console.debug("Purchase hash: %s \n", buyCardReceipt.hash);
+		}
 		const usdAmount = Money.create(quote.outputAmount, quote.targetCurrency);
 		const buyer = await this.signer.getAddress();
 		const receipt = new Receipt(
@@ -413,8 +447,10 @@ export class ZebecCardEvmService {
 		while (retries < maxRetries) {
 			try {
 				const response = await this.apiService.purchaseCard(payload);
-				console.debug("API response: %o \n", response.data);
 
+				if (this.sandbox) {
+					console.debug("API response: %o \n", response.data);
+				}
 				const data = response.data as OrderWithExtraInfo;
 
 				return {
@@ -423,17 +459,23 @@ export class ZebecCardEvmService {
 				};
 			} catch (error) {
 				if (error instanceof AxiosError) {
-					console.debug("error:", error.response?.data);
-					console.debug("error:", error.message);
+					if (this.sandbox) {
+						console.debug("error:", error.response?.data);
+						console.debug("error:", error.message);
+					}
 				} else {
-					console.debug("error:", error);
+					if (this.sandbox) {
+						console.debug("error:", error);
+					}
 				}
 				if (retries >= maxRetries) {
 					throw error;
 				}
 
 				retries += 1;
-				console.debug(`Retrying in ${delay / 1000} seconds...`);
+				if (this.sandbox) {
+					console.debug(`Retrying in ${delay / 1000} seconds...`);
+				}
 				await new Promise((resolve) => setTimeout(resolve, delay));
 				delay *= 2; // Exponential backoff
 			}
