@@ -38,7 +38,7 @@ export class ZebecCardAPIService {
 	readonly apiConfig: APIConfig & {
 		apiUrl: string;
 	};
-	private readonly sdkVersion: string = "1.1.0";
+	private readonly sdkVersion: string = "1.2.0";
 	private readonly api: axios.AxiosInstance;
 	private readonly sandbox: boolean = false;
 
@@ -137,6 +137,12 @@ export class ZebecCardAPIService {
 	}
 
 	// Fetch quote
+	async fetchQuote(
+		symbol: string,
+		amount: string | number,
+		type?: "EXACT_IN" | "EXACT_OUT",
+	): Promise<Quote>;
+	async fetchQuote(params: FetchQuoteParams): Promise<Quote>;
 	async fetchQuote(
 		symbolOrParams: string | FetchQuoteParams,
 		amount?: string | number,
@@ -292,6 +298,8 @@ export class ZebecCardEvmService {
 	 * @param type "EXACT_IN" | "EXACT_OUT"
 	 * @returns
 	 */
+	async fetchQuote(amount: string | number, type?: "EXACT_IN" | "EXACT_OUT"): Promise<Quote>;
+	async fetchQuote(params: Omit<FetchQuoteParams, "symbol"> & { token: string }): Promise<Quote>;
 	async fetchQuote(
 		amountOrParams: string | number | (Omit<FetchQuoteParams, "symbol"> & { token: string }),
 		type: "EXACT_IN" | "EXACT_OUT" = "EXACT_OUT",
@@ -352,15 +360,18 @@ export class ZebecCardEvmService {
 		overrides?: ethers.Overrides;
 	}): Promise<{ receipt: ethers.ContractTransactionReceipt; orderDetail: OrderWithExtraInfo }> {
 		const token = params.token;
+		const tokenSymbol =
+			token?.symbol || params.quote.sourceToken || params.quote.inputToken || "USDC";
 		const shouldSwap =
-			token?.swapConfig?.shouldSwapOnDex ??
-			token?.shouldSwapOnDex ??
-			params.quote.shouldSwapOnDex ??
-			Boolean(params.quote.swapQuote);
+			tokenSymbol.toLowerCase() !== "usdc" ||
+			(token?.swapConfig?.shouldSwapOnDex ??
+				token?.shouldSwapOnDex ??
+				params.quote.shouldSwapOnDex ??
+				Boolean(params.quote.swapQuote));
 		if (!shouldSwap) {
 			return this.purchaseCardDirect({
 				...params,
-				tokenSymbol: token?.symbol || params.quote.sourceToken || params.quote.inputToken || "USDC",
+				tokenSymbol,
 			});
 		}
 		return this.purchaseCardWithSwap({
@@ -505,16 +516,56 @@ export class ZebecCardEvmService {
 				"Swap quote is missing executable transaction parameters",
 			);
 		}
-		const configuredTokenAddress =
-			params.token.address || params.token.contractAddress || params.token.mintAddress;
+		const configuredTokenAddress = params.token.address || params.token.contractAddress;
 		if (
-			configuredTokenAddress &&
+			!configuredTokenAddress ||
 			configuredTokenAddress.toLowerCase() !== sourceToken.toLowerCase()
 		) {
 			throw new Error("Invalid swap quote: input token does not match the selected token");
 		}
 		const cardType = cardProgram.type === "carbon" ? "carbon" : "silver";
 		const spender = await this.zebecCard.getAddress();
+		const swapParams = rawQuote.swapParams;
+		const swapDescription = swapParams.description;
+		const usdcAddress = USDC_ADDRESS[this.chainId];
+		if (
+			swapDescription.dstToken?.toLowerCase() !== usdcAddress.toLowerCase() ||
+			swapDescription.dstReceiver?.toLowerCase() !== spender.toLowerCase() ||
+			swapDescription.srcReceiver?.toLowerCase() !== swapParams.executor.toLowerCase()
+		) {
+			throw new Error("Invalid swap quote: route is not bound to the Zebec Card contract");
+		}
+		if (params.quote.chainName && params.quote.chainName.toUpperCase() !== this.getApiChainName()) {
+			throw new Error("Invalid swap quote: chain does not match the configured signer chain");
+		}
+		if (
+			params.quote.payment &&
+			(params.quote.payment.chain !== this.getApiChainName() ||
+				params.quote.payment.flow !== "SWAP_AND_BUY" ||
+				params.quote.payment.contractAddress.toLowerCase() !== sourceToken.toLowerCase() ||
+				params.quote.payment.cardContractAddress?.toLowerCase() !== spender.toLowerCase() ||
+				params.quote.payment.outputTokenAddress?.toLowerCase() !== usdcAddress.toLowerCase())
+		) {
+			throw new Error("Invalid swap quote: Partner payment metadata does not match the route");
+		}
+		const description = await this.toSwapDescription(swapDescription);
+		const cardConfig = await this.zebecCard.cardConfig();
+		const guaranteedCardLoad = params.quote.payment?.minimumCardLoadAmount
+			? BigInt(params.quote.payment.minimumCardLoadAmount)
+			: description.minReturnAmount;
+		const expectedCardLoad = params.quote.payment?.expectedCardLoadAmount
+			? BigInt(params.quote.payment.expectedCardLoadAmount)
+			: guaranteedCardLoad;
+		if (
+			guaranteedCardLoad < cardConfig.minCardAmount ||
+			expectedCardLoad > cardConfig.maxCardAmount
+		) {
+			const outputDecimals = await this.usdcToken.decimals();
+			throw new CardPurchaseAmountOutOfRangeError(
+				ethers.formatUnits(cardConfig.minCardAmount, outputDecimals),
+				ethers.formatUnits(cardConfig.maxCardAmount, outputDecimals),
+			);
+		}
 		const isNative = ["eth", "bnb"].includes(params.token.symbol.toLowerCase());
 		if (isNative) {
 			const wrapResponse = await this.wrapNative(sourceAmount, params.overrides);
@@ -522,11 +573,10 @@ export class ZebecCardEvmService {
 		}
 		const approval = await this.approveToken(sourceToken, sourceAmount, spender, params.overrides);
 		if (approval) await approval.wait();
-		const description = await this.toSwapDescription(rawQuote.swapParams.description);
 		const response = await this.zebecCard.swapAndBuy(
-			rawQuote.swapParams.executor,
+			swapParams.executor,
 			description,
-			rawQuote.swapParams.routeData,
+			swapParams.routeData,
 			cardType === "carbon" ? "reloadable" : "non_reloadable",
 			hashSHA256(params.recipient.emailAddress),
 			{
@@ -548,10 +598,8 @@ export class ZebecCardEvmService {
 	}
 
 	private validateQuote(quote: Quote, amount: string | number, currencies: string[]) {
-		if (
-			quote.amountRequested !== undefined &&
-			Number(quote.amountRequested) !== formatAmount(amount)
-		) {
+		const requestedAmount = quote.amountRequested ?? quote.requestedAmount?.amount;
+		if (requestedAmount !== undefined && Number(requestedAmount) !== formatAmount(amount)) {
 			throw new Error("Invalid Quote: Amount request and passed amount does not match");
 		}
 		if (quote.expiresIn - 20000 < Date.now()) throw new Error("Quote expired");

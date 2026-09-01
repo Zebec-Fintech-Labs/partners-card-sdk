@@ -26,7 +26,7 @@ For EVM compatible networks:
 
 ```typescript
 import { ethers } from 'ethers';
-import { ZebecCardService, Recipient, CountryCode } from '@zebec-fintech/silver-card-sdk';
+import { ZebecCardEvmService, Recipient, CountryCode } from '@zebec-network/partners-card-sdk';
 
 const signer: ethers.Signer = ... ; // Signer instance from Wallet Extension
 
@@ -53,7 +53,7 @@ const service = new ZebecCardEvmService(
 
 The `fetchQuote` method retrieves a quote for the specified amount in USD. The quote is used to calculate the corresponding token amount required for the card purchase. It expires in about 30 seconds.
 
-> **Note**: The `fetchQuote` method should be called regularly. Make sure to check it's validity before proceeding with the purchase.
+> **Note**: The `fetchQuote` method should be called regularly. Make sure to check its validity before proceeding with the purchase.
 
 ```typescript
 const amount = "150.55"; // Amount in USD
@@ -61,13 +61,14 @@ const quote = await service.fetchQuote(amount);
 ```
 
 For a token that may require a DEX swap, use `fetchQuoteForToken`. The API
-returns the executable swap data when the token is configured with
-`swapConfig.shouldSwapOnDex`:
+returns executable swap data when the token requires DEX routing. This VELO
+example assumes `service` was created with a BSC signer and chain ID `56`:
 
 ```typescript
-const quote = await service.fetchQuoteForToken({
-	token: "ZBCN",
-	amount: "10",
+const veloAmount = "2000"; // Choose enough input to satisfy the post-fee card minimum.
+const veloQuote = await service.fetchQuoteForToken({
+	token: "VELO",
+	amount: veloAmount,
 	type: "EXACT_IN",
 	targetCurrency: "USD",
 });
@@ -102,14 +103,13 @@ Token-aware quotes additionally expose `sourceTokenAddress`, `chainName`,
 
 ### Purchase Card
 
-The `purchaseCard` method initiates a virtual card purchase. It performs four main operations:
+The `purchaseCard` method initiates a virtual card purchase. It performs three main operations:
 
 1. Approves token spending to the ZebecCard smart contract. (ERC20 tokens only)
-2. Deposits tokens into the user's Zebec vault.
-3. Initiates the card purchase on-chain. (ERC20 tokens only)
-4. Posts transaction data, along with metadata, to the Zebec backend.
+2. Initiates the direct purchase or swap-and-buy transaction on-chain.
+3. Posts the confirmed transaction and quote metadata to the Zebec backend.
 
-The method returns a tuple with responses from each stage of the process.
+The method returns an object containing `receipt` and `orderDetail`.
 
 For EVM compatible networks:
 
@@ -142,7 +142,9 @@ const recipient = Recipient.create(
 );
 
 const programWithDetails = await service.fetchZebecCardProgram(countryCode);
-assert(programWithDetails.availablePrograms.length);
+if (!programWithDetails.availablePrograms.length) {
+	throw new Error("No card program is available for this recipient");
+}
 
 const cardProgramId = programWithDetails.availablePrograms[0].id;
 
@@ -157,19 +159,35 @@ const { orderDetail, receipt } = await service.purchaseCard({
 });
 
 console.log("receipt:", receipt.hash);
-console.log("order details:", orderDetails);
+console.log("order details:", orderDetail);
 ```
 
-The `purchaseCardWithUsdc` method in ZebecCardEvmService returns an object reponse with two properties:
+The `purchaseCardWithUsdc` method in `ZebecCardEvmService` returns an object with two properties:
 
 1. **receipt**: Transaction receipt of card purchase.
-2. **orderDetails**: Card order details like order id, recipient details, currency, card type, etc.
+2. **orderDetail**: Card order details like order id, recipient details, currency, card type, etc.
 
 `purchaseCard()` selects the appropriate direct or DEX swap execution path
-from the quote/token metadata. The underlying contract method is an
-implementation detail and may evolve as backend-authorized fee execution is
-introduced. If swap metadata is missing, it throws `SwapQuoteUnavailableError`
-instead of silently sending the wrong transaction.
+from the quote/token metadata. Non-USDC tokens require an EVM contract address
+and executable swap data from the API:
+
+```typescript
+const { orderDetail, receipt } = await service.purchaseCard({
+	amount: veloAmount,
+	cardProgramId,
+	recipient,
+	quote: veloQuote,
+	token: {
+		symbol: "VELO",
+		address: "0xf486ad071f3bee968384d2e39e2d8af0fcf6fd46",
+	},
+});
+```
+
+The swap path approves the source token and calls the existing Card contract's
+`swapAndBuy` function. Unsafe receivers, mismatched tokens/chains, missing
+routes, and card loads outside the contract limits are rejected before token
+approval. The existing `purchaseCardWithUsdc()` API and return shape are unchanged.
 
 Both EVM and Solana purchase methods accept an optional client-generated
 `idempotencyKey`. Version 1.1 reserves this parameter for the future

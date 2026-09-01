@@ -66,21 +66,20 @@ export type EvmSwapData = {
 
 export type Quote = {
 	id: string;
-	quoteType: "EXACT_IN" | "EXACT_OUT" | "DEFAULT";
-	/** Legacy USDC quote fields (kept for compatibility). */
-	inputToken?: string;
-	outputToken?: string;
-	inputAmount?: number | string;
-	outputAmount?: number | string;
-	exchangeRate?: number | string;
-	platformFee?: number | string;
+	quoteType: "EXACT_IN" | "EXACT_OUT";
+	inputToken: string;
+	outputToken: string;
+	inputAmount: number;
+	outputAmount: number;
+	exchangeRate: number;
+	platformFee: number;
 	expiresIn: number;
-	timestamp: Date | string;
-	token?: string;
+	timestamp: Date;
+	token: string;
 	targetCurrency: string;
-	amountRequested?: number | string;
-	pricePerUnitCurrency?: number | string;
-	totalPrice?: number | string;
+	amountRequested: number;
+	pricePerUnitCurrency: number;
+	totalPrice: number;
 	/** New quote response fields used by token-aware card purchases. */
 	sourceToken?: string;
 	targetAmount?: number | string;
@@ -89,6 +88,22 @@ export type Quote = {
 	chainName?: string;
 	swapQuote?: SwapQuote & { rawQuote?: EvmSwapData | unknown };
 	shouldSwapOnDex?: boolean;
+	/** Optional authoritative execution metadata returned by Partner top-up quotes. */
+	requestedAmount?: { amount: string; currencyCode: string };
+	payment?: PartnerQuotePayment;
+};
+
+export type PartnerQuotePayment = {
+	chain: string;
+	contractAddress: string;
+	tokenAmount: string;
+	tokenDecimals: number;
+	flow?: "SWAP_AND_BUY" | "BUY_CARD_DIRECT";
+	cardContractAddress?: string;
+	outputTokenAddress?: string;
+	outputTokenDecimals?: number;
+	expectedCardLoadAmount?: string;
+	minimumCardLoadAmount?: string;
 };
 
 /** Token metadata required by the automatic purchase router. */
@@ -178,7 +193,7 @@ export class Deposit {
 	chainName?: string;
 	network?: "MAINNET" | "TESTNET";
 	tokenName: string;
-	tokenAmount: number | string;
+	tokenAmount: number;
 	signature: string;
 	txHash: string;
 	blockHash: string;
@@ -201,7 +216,7 @@ export class Deposit {
 	) {
 		this.chainId = chainId;
 		this.tokenName = tokenName;
-		this.tokenAmount = tokenAmount;
+		this.tokenAmount = tokenAmount as number;
 		this.signature = signature;
 		this.txHash = txHash;
 		this.blockHash = blockHash;
