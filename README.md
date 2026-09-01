@@ -1,6 +1,6 @@
 # Zebec Partners Card SDK
 
-The Zebec Card SDK allows developers to integrate the functionality of purchasing and managing Zebec virtual cards into their applications. We currently support EVM chains (Ethereum, Binance Smart Chain (BSC), Polygon and Base).
+The Zebec Card SDK allows developers to integrate the functionality of purchasing and managing Zebec virtual cards into their applications. EVM cards (Ethereum, Binance Smart Chain (BSC), Polygon and Base) are supported directly, and Solana cards can use the companion `@zebec-network/zebec-card-v2-sdk` service.
 
 ---
 
@@ -60,27 +60,43 @@ const amount = "150.55"; // Amount in USD
 const quote = await service.fetchQuote(amount);
 ```
 
+For a token that may require a DEX swap, use `fetchQuoteForToken`. The API
+returns the executable swap data when the token is configured with
+`swapConfig.shouldSwapOnDex`:
+
+```typescript
+const quote = await service.fetchQuoteForToken({
+	token: "ZBCN",
+	amount: "10",
+	type: "EXACT_IN",
+	targetCurrency: "USD",
+});
+```
+
 The `fetchQuote` method returns a quote object with the following fields:
 
 ```typescript
 export type Quote = {
- id: string;
- quoteType: "EXACT_IN" | "EXACT_OUT";
- inputToken: string;
- outputToken: string;
- inputAmount: number;
- outputAmount: number;
- exchangeRate: number;
- platformFee: number;
- expiresIn: number;
- timestamp: Date;
- token: string;
- targetCurrency: string;
- amountRequested: number;
- pricePerUnitCurrency: number;
- totalPrice: number;
+	id: string;
+	quoteType: "EXACT_IN" | "EXACT_OUT";
+	inputToken: string;
+	outputToken: string;
+	inputAmount: number;
+	outputAmount: number;
+	exchangeRate: number;
+	platformFee: number;
+	expiresIn: number;
+	timestamp: Date;
+	token: string;
+	targetCurrency: string;
+	amountRequested: number;
+	pricePerUnitCurrency: number;
+	totalPrice: number;
 };
 ```
+
+Token-aware quotes additionally expose `sourceTokenAddress`, `chainName`,
+`shouldSwapOnDex`, and `swapQuote.rawQuote` when a DEX execution is required.
 
 ---
 
@@ -112,17 +128,17 @@ const address1 = "Shittal street, Bharatpur - 10, Chitwan";
 
 const amount = "10";
 const recipient = Recipient.create(
- participantId,
- firstName,
- lastName,
- emailAddress,
- mobilePhone,
- language,
- city,
- state,
- postalCode,
- countryCode,
- address1,
+	participantId,
+	firstName,
+	lastName,
+	emailAddress,
+	mobilePhone,
+	language,
+	city,
+	state,
+	postalCode,
+	countryCode,
+	address1,
 );
 
 const programWithDetails = await service.fetchZebecCardProgram(countryCode);
@@ -132,11 +148,12 @@ const cardProgramId = programWithDetails.availablePrograms[0].id;
 
 const quote = await service.fetchQuote(amount);
 console.log("quote:", quote);
-const { orderDetail, receipt } = await service.purchaseCardWithUsdc({
- amount,
- cardProgramId,
- recipient,
- quote,
+const { orderDetail, receipt } = await service.purchaseCard({
+	amount,
+	cardProgramId,
+	recipient,
+	quote,
+	token: { symbol: "USDC" },
 });
 
 console.log("receipt:", receipt.hash);
@@ -147,6 +164,16 @@ The `purchaseCardWithUsdc` method in ZebecCardEvmService returns an object repon
 
 1. **receipt**: Transaction receipt of card purchase.
 2. **orderDetails**: Card order details like order id, recipient details, currency, card type, etc.
+
+`purchaseCard()` automatically calls `buyCardDirect()` for direct tokens and
+`swapAndBuy()` for tokens whose quote/token metadata enables
+`shouldSwapOnDex`. If swap metadata is missing, it throws
+`SwapQuoteUnavailableError` instead of silently sending the wrong transaction.
+
+For Solana, construct a `ZebecCardSolanaService` with a configured
+`ZebecCardV2Service` and call its `fetchQuote()` and `purchaseCard()` methods;
+it routes to `createSilverCard`/`loadCarbonCard` or the corresponding
+`swapAnd*` method.
 
 ---
 
@@ -169,13 +196,13 @@ To create an instance of `ZebecCardEvmService`, you need:
  * Supported Chain Ids by SDK
  */
 export enum SupportedEvmChain {
- Mainnet = 1,
- Sepolia = 11155111,
- Base = 8453,
- Bsc = 56,
- BscTestnet = 97,
- Polygon = 137,
- PolygonAmoy = 80002,
+	Mainnet = 1,
+	Sepolia = 11155111,
+	Base = 8453,
+	Bsc = 56,
+	BscTestnet = 97,
+	Polygon = 137,
+	PolygonAmoy = 80002,
 }
 ```
 

@@ -10,11 +10,14 @@ import {
 	DailyCardPurchaseLimitExceedError,
 	InvalidEmailError,
 	NotEnoughBalanceError,
+	SwapQuoteUnavailableError,
 } from "./errors";
 import {
+	CardToken,
 	CardProgramWithUserRegion,
 	CountryCode,
 	Deposit,
+	FetchQuoteParams,
 	Money,
 	Order,
 	OrderCardRequest,
@@ -35,7 +38,7 @@ export class ZebecCardAPIService {
 	readonly apiConfig: APIConfig & {
 		apiUrl: string;
 	};
-	private readonly sdkVersion: string = "1.0.0";
+	private readonly sdkVersion: string = "1.1.0";
 	private readonly api: axios.AxiosInstance;
 	private readonly sandbox: boolean = false;
 
@@ -135,12 +138,26 @@ export class ZebecCardAPIService {
 
 	// Fetch quote
 	async fetchQuote(
-		symbol: string,
-		amount: string | number,
+		symbolOrParams: string | FetchQuoteParams,
+		amount?: string | number,
 		type: "EXACT_IN" | "EXACT_OUT" = "EXACT_OUT",
 	) {
 		try {
-			const url = `/exchange/quotes/${symbol.toString()}_USD/${formatAmount(amount)}?type=${type}`;
+			const params: FetchQuoteParams =
+				typeof symbolOrParams === "string"
+					? { symbol: symbolOrParams, amount: amount as string | number, type }
+					: symbolOrParams;
+			const targetCurrency = params.targetCurrency || "USD";
+			const query = new URLSearchParams({
+				type: params.type || "EXACT_OUT",
+			});
+			if (params.slippage !== undefined) query.set("slippage", String(params.slippage));
+			if (params.platform) query.set("platform", params.platform);
+			if (params.chainName) query.set("chainName", params.chainName);
+			const symbol = params.symbol || params.token;
+			if (!symbol || params.amount === undefined)
+				throw new Error("Quote token and amount are required");
+			const url = `/exchange/quotes/${encodeURIComponent(symbol)}_${encodeURIComponent(targetCurrency)}/${formatAmount(params.amount)}?${query}`;
 			const { data } = await this.api.get(url);
 
 			return {
@@ -275,9 +292,371 @@ export class ZebecCardEvmService {
 	 * @param type "EXACT_IN" | "EXACT_OUT"
 	 * @returns
 	 */
-	async fetchQuote(amount: string | number, type: "EXACT_IN" | "EXACT_OUT" = "EXACT_OUT") {
-		const res = await this.apiService.fetchQuote("USDC", amount, type);
-		return res;
+	async fetchQuote(
+		amountOrParams: string | number | (Omit<FetchQuoteParams, "symbol"> & { token: string }),
+		type: "EXACT_IN" | "EXACT_OUT" = "EXACT_OUT",
+	) {
+		if (typeof amountOrParams === "object") {
+			return this.fetchQuoteForToken(amountOrParams);
+		}
+		return this.apiService.fetchQuote("USDC", amountOrParams, type);
+	}
+
+	/**
+	 * Fetch a quote for any supported card token. The API includes `swapQuote`
+	 * and its aggregator-specific `rawQuote` when the token is DEX-routed.
+	 */
+	async fetchQuoteForToken(params: Omit<FetchQuoteParams, "symbol"> & { token: string }) {
+		return this.apiService.fetchQuote({
+			symbol: params.token,
+			amount: params.amount,
+			type: params.type,
+			targetCurrency: params.targetCurrency,
+			chainName: params.chainName || this.getApiChainName(),
+			platform: params.platform,
+			slippage: params.slippage,
+		});
+	}
+
+	private getApiChainName() {
+		switch (this.chainId) {
+			case SupportedEvmChain.Base:
+				return "BASE";
+			case SupportedEvmChain.Bsc:
+			case SupportedEvmChain.BscTestnet:
+				return "BINANCE";
+			case SupportedEvmChain.Polygon:
+			case SupportedEvmChain.PolygonAmoy:
+				return "POLYGON";
+			default:
+				return "ETHEREUM";
+		}
+	}
+
+	/**
+	 * Automatically select direct card purchase or DEX swap-and-buy based on
+	 * token/quote metadata. Existing `purchaseCardWithUsdc` remains available
+	 * for backwards compatibility.
+	 */
+	async purchaseCard(params: {
+		amount: string | number;
+		quote: Quote;
+		token?: CardToken;
+		cardProgramId: string;
+		recipient: Recipient;
+		overrides?: ethers.Overrides;
+	}): Promise<{ receipt: ethers.ContractTransactionReceipt; orderDetail: OrderWithExtraInfo }> {
+		const token = params.token;
+		const shouldSwap =
+			token?.swapConfig?.shouldSwapOnDex ??
+			token?.shouldSwapOnDex ??
+			params.quote.shouldSwapOnDex ??
+			Boolean(params.quote.swapQuote);
+		if (!shouldSwap) {
+			return this.purchaseCardDirect({
+				...params,
+				tokenSymbol: token?.symbol || params.quote.sourceToken || params.quote.inputToken || "USDC",
+			});
+		}
+		return this.purchaseCardWithSwap({
+			...params,
+			token: token || {
+				symbol: params.quote.sourceToken || params.quote.inputToken || params.quote.token || "",
+			},
+		});
+	}
+
+	private async purchaseCardDirect(params: {
+		amount: string | number;
+		quote: Quote;
+		cardProgramId: string;
+		recipient: Recipient;
+		tokenSymbol: string;
+		overrides?: ethers.Overrides;
+	}): Promise<{ receipt: ethers.ContractTransactionReceipt; orderDetail: OrderWithExtraInfo }> {
+		const { quote } = params;
+		await this.apiService.ping();
+		const cardProgramDetails = await this.apiService.fetchZebecCardPrograms(
+			params.recipient.countryCode,
+		);
+		const cardProgram = cardProgramDetails.availablePrograms.find(
+			(p) => p.id === params.cardProgramId,
+		);
+		if (!cardProgram) throw new Error("Card program not supported for user's region");
+		if (!isEmailValid(params.recipient.emailAddress))
+			throw new InvalidEmailError(params.recipient.emailAddress);
+		const tokenSymbol = params.tokenSymbol.toLowerCase();
+		if (tokenSymbol !== "usdc")
+			throw new Error(
+				"Direct EVM card purchase is only supported for USDC; enable DEX swapping for this token",
+			);
+		this.validateQuote(quote, params.amount, cardProgram.availableCurrencies);
+		const totalPrice = String(
+			quote.totalPrice ?? quote.sourceAmount ?? quote.inputAmount ?? params.amount,
+		);
+		const decimals = await this.usdcToken.decimals();
+		const parsedAmount = ethers.parseUnits(totalPrice, decimals);
+		const balance = await this.usdcToken.balanceOf(this.signer);
+		if (parsedAmount > balance)
+			throw new NotEnoughBalanceError(ethers.formatUnits(balance, decimals), totalPrice);
+		const cardConfig = await this.zebecCard.cardConfig();
+		if (parsedAmount < cardConfig.minCardAmount || parsedAmount > cardConfig.maxCardAmount) {
+			throw new CardPurchaseAmountOutOfRangeError(
+				ethers.formatUnits(cardConfig.minCardAmount, decimals),
+				ethers.formatUnits(cardConfig.maxCardAmount, decimals),
+			);
+		}
+		const purchaseInfo = await this.zebecCard.cardPurchases(this.signer);
+		const lastPurchaseDate = new Date(Number(purchaseInfo.unixInRecord * 1000n));
+		const dailyAmount = areDatesOfSameDay(new Date(), lastPurchaseDate)
+			? purchaseInfo.totalCardBoughtPerDay + parsedAmount
+			: parsedAmount;
+		if (dailyAmount > cardConfig.dailyCardBuyLimit)
+			throw new DailyCardPurchaseLimitExceedError(
+				ethers.formatUnits(cardConfig.dailyCardBuyLimit, decimals),
+				ethers.formatUnits(purchaseInfo.totalCardBoughtPerDay, decimals),
+			);
+		const allowance = await this.usdcToken.allowance(this.signer, this.zebecCard);
+		if (allowance < parsedAmount) {
+			const approval = await this.usdcToken.approve(
+				this.zebecCard,
+				parsedAmount,
+				this.transactionOverrides(params.overrides),
+			);
+			await approval.wait();
+		}
+		const cardType = cardProgram.type === "carbon" ? "reloadable" : "non_reloadable";
+		const response = await this.zebecCard.buyCardDirect(
+			parsedAmount,
+			cardType,
+			hashSHA256(params.recipient.emailAddress),
+			this.transactionOverrides(params.overrides),
+		);
+		const receipt = await response.wait();
+		if (!receipt) throw new Error(`Could not get tx receipt for tx: ${response.hash}`);
+		return {
+			receipt,
+			orderDetail: await this.postOrder(
+				quote,
+				params.recipient,
+				params.cardProgramId,
+				totalPrice,
+				"USDC",
+				receipt,
+			),
+		};
+	}
+
+	private async purchaseCardWithSwap(params: {
+		amount: string | number;
+		quote: Quote;
+		token: CardToken;
+		cardProgramId: string;
+		recipient: Recipient;
+		overrides?: ethers.Overrides;
+	}): Promise<{ receipt: ethers.ContractTransactionReceipt; orderDetail: OrderWithExtraInfo }> {
+		const rawQuote = params.quote.swapQuote?.rawQuote as any;
+		if (
+			!rawQuote ||
+			typeof rawQuote !== "object" ||
+			!rawQuote.swapParams ||
+			typeof rawQuote.swapParams !== "object" ||
+			!rawQuote.swapParams.description ||
+			typeof rawQuote.swapParams.description !== "object" ||
+			!rawQuote.swapParams.executor ||
+			!rawQuote.swapParams.routeData
+		) {
+			throw new SwapQuoteUnavailableError();
+		}
+		await this.apiService.ping();
+		const cardProgramDetails = await this.apiService.fetchZebecCardPrograms(
+			params.recipient.countryCode,
+		);
+		const cardProgram = cardProgramDetails.availablePrograms.find(
+			(p) => p.id === params.cardProgramId,
+		);
+		if (!cardProgram) throw new Error("Card program not supported for user's region");
+		if (!isEmailValid(params.recipient.emailAddress))
+			throw new InvalidEmailError(params.recipient.emailAddress);
+		this.validateQuote(params.quote, params.amount, cardProgram.availableCurrencies);
+
+		const swapData = rawQuote as {
+			dstAmount?: string;
+			ether?: string;
+			swapParams: {
+				description: {
+					srcToken: string;
+					srcAmount: string;
+					minReturnAmount: string;
+					[key: string]: unknown;
+				};
+				[key: string]: unknown;
+			};
+		};
+		const sourceToken = swapData.swapParams.description.srcToken;
+		const sourceAmount = swapData.swapParams.description.srcAmount;
+		if (!sourceToken || !sourceAmount || !swapData.swapParams.description.minReturnAmount) {
+			throw new SwapQuoteUnavailableError(
+				"Swap quote is missing executable transaction parameters",
+			);
+		}
+		const configuredTokenAddress =
+			params.token.address || params.token.contractAddress || params.token.mintAddress;
+		if (
+			configuredTokenAddress &&
+			configuredTokenAddress.toLowerCase() !== sourceToken.toLowerCase()
+		) {
+			throw new Error("Invalid swap quote: input token does not match the selected token");
+		}
+		const cardType = cardProgram.type === "carbon" ? "carbon" : "silver";
+		const spender = await this.zebecCard.getAddress();
+		const isNative = ["eth", "bnb"].includes(params.token.symbol.toLowerCase());
+		if (isNative) {
+			const wrapResponse = await this.wrapNative(sourceAmount, params.overrides);
+			await wrapResponse.wait();
+		}
+		const approval = await this.approveToken(sourceToken, sourceAmount, spender, params.overrides);
+		if (approval) await approval.wait();
+		const description = await this.toSwapDescription(rawQuote.swapParams.description);
+		const response = await this.zebecCard.swapAndBuy(
+			rawQuote.swapParams.executor,
+			description,
+			rawQuote.swapParams.routeData,
+			cardType === "carbon" ? "reloadable" : "non_reloadable",
+			hashSHA256(params.recipient.emailAddress),
+			{
+				value: ethers.parseEther(swapData.ether || "0"),
+				...this.transactionOverrides(params.overrides),
+			},
+		);
+		const receipt = await response.wait();
+		if (!receipt) throw new Error(`Could not get tx receipt for tx: ${response.hash}`);
+		const orderDetail = await this.postOrder(
+			params.quote,
+			params.recipient,
+			params.cardProgramId,
+			sourceAmount,
+			params.token.symbol,
+			receipt,
+		);
+		return { receipt, orderDetail };
+	}
+
+	private validateQuote(quote: Quote, amount: string | number, currencies: string[]) {
+		if (
+			quote.amountRequested !== undefined &&
+			Number(quote.amountRequested) !== formatAmount(amount)
+		) {
+			throw new Error("Invalid Quote: Amount request and passed amount does not match");
+		}
+		if (quote.expiresIn - 20000 < Date.now()) throw new Error("Quote expired");
+		if (
+			!currencies.some((currency) => currency.toUpperCase() === quote.targetCurrency.toUpperCase())
+		) {
+			throw new Error("Invalid Quote: Target currency in quote not available in card program");
+		}
+	}
+
+	private transactionOverrides(overrides?: ethers.Overrides) {
+		return { ...overrides, gasLimit: overrides?.gasLimit || DEFAULT_GAS_LIMIT };
+	}
+
+	private async approveToken(
+		tokenAddress: string,
+		amount: string,
+		spender: string,
+		overrides?: ethers.Overrides,
+	) {
+		const token = ERC20__factory.connect(tokenAddress, this.signer);
+		const decimals = await token.decimals();
+		const parsedAmount = ethers.parseUnits(amount, decimals);
+		const balance = await token.balanceOf(this.signer);
+		if (parsedAmount > balance)
+			throw new NotEnoughBalanceError(ethers.formatUnits(balance, decimals), amount);
+		const allowance = await token.allowance(this.signer, spender);
+		return allowance < parsedAmount
+			? token.approve(spender, parsedAmount, this.transactionOverrides(overrides))
+			: null;
+	}
+
+	private async wrapNative(amount: string, overrides?: ethers.Overrides) {
+		const weth = ERC20__factory.connect(await this.zebecCard.wEth(), this.signer);
+		return this.signer.sendTransaction({
+			to: await weth.getAddress(),
+			value: ethers.parseEther(amount),
+			...this.transactionOverrides(overrides),
+		});
+	}
+
+	private async toSwapDescription(description: {
+		srcToken: string;
+		dstToken: string;
+		srcReceiver: string;
+		dstReceiver: string;
+		srcAmount: string;
+		minReturnAmount: string;
+		flags: string;
+	}) {
+		const srcToken = ERC20__factory.connect(description.srcToken, this.signer);
+		const dstToken = ERC20__factory.connect(description.dstToken, this.signer);
+		const [srcDecimals, dstDecimals] = await Promise.all([
+			srcToken.decimals(),
+			dstToken.decimals(),
+		]);
+		return {
+			srcToken: description.srcToken,
+			dstToken: description.dstToken,
+			srcReceiver: description.srcReceiver,
+			dstReceiver: description.dstReceiver,
+			amount: ethers.parseUnits(description.srcAmount, srcDecimals),
+			minReturnAmount: ethers.parseUnits(description.minReturnAmount, dstDecimals),
+			flags: BigInt(description.flags),
+		};
+	}
+
+	private async postOrder(
+		quote: Quote,
+		recipient: Recipient,
+		cardProgramId: string,
+		amount: string | number,
+		tokenName: string,
+		txReceipt: ethers.ContractTransactionReceipt,
+	) {
+		const usdAmount = Money.create(
+			quote.outputAmount ?? quote.targetAmount ?? amount,
+			quote.targetCurrency,
+		);
+		const buyer = await this.signer.getAddress();
+		const receipt = new Receipt(
+			quote,
+			new Deposit(
+				this.chainId,
+				tokenName,
+				amount,
+				txReceipt.hash,
+				txReceipt.hash,
+				txReceipt.blockHash || "",
+				buyer,
+				recipient.emailAddress,
+				"",
+				this.getApiChainName(),
+				this.sandbox ? "TESTNET" : "MAINNET",
+			),
+		);
+		const payload = new OrderCardRequest(usdAmount, cardProgramId, recipient, receipt);
+		let retries = 0;
+		let delay = 1000;
+		while (retries < 5) {
+			try {
+				return (await this.apiService.purchaseCard(payload)).data as OrderWithExtraInfo;
+			} catch (error) {
+				if (retries >= 4) throw error;
+				retries += 1;
+				await new Promise((resolve) => setTimeout(resolve, delay));
+				delay *= 2;
+			}
+		}
+		throw new Error("Max retries reached");
 	}
 
 	async fetchZebecCardProgram(countryCode: CountryCode) {
@@ -318,11 +697,14 @@ export class ZebecCardEvmService {
 		}
 
 		// validate quote
-		if (quote.token.toLowerCase() !== "usdc") {
+		if ((quote.token || quote.sourceToken || quote.inputToken || "").toLowerCase() !== "usdc") {
 			throw new Error("Invalid Quote: Quote not for USDC");
 		}
 
-		if (quote.amountRequested !== formatAmount(params.amount)) {
+		if (
+			quote.amountRequested !== undefined &&
+			Number(quote.amountRequested) !== formatAmount(params.amount)
+		) {
 			throw new Error("Invalid Quote: Amount request and passed amount does not match");
 		}
 
@@ -330,12 +712,19 @@ export class ZebecCardEvmService {
 			throw new Error("Quote expired");
 		}
 
-		if (!cardProgram.availableCurrencies.some((c) => c === quote.targetCurrency)) {
+		if (
+			!cardProgram.availableCurrencies.some(
+				(c) => c.toUpperCase() === quote.targetCurrency.toUpperCase(),
+			)
+		) {
 			throw new Error("Invalid Quote: Target currency in quote not available in card program");
 		}
 
 		const decimals = await this.usdcToken.decimals();
-		const parsedAmount = ethers.parseUnits(quote.totalPrice.toString(), decimals);
+		const totalPrice = String(
+			quote.totalPrice ?? quote.sourceAmount ?? quote.inputAmount ?? params.amount,
+		);
+		const parsedAmount = ethers.parseUnits(totalPrice, decimals);
 
 		const usdcBalance = await this.usdcToken.balanceOf(this.signer);
 		if (this.sandbox) {
@@ -343,10 +732,7 @@ export class ZebecCardEvmService {
 		}
 
 		if (parsedAmount > usdcBalance) {
-			throw new NotEnoughBalanceError(
-				ethers.formatUnits(usdcBalance, decimals),
-				quote.totalPrice.toString(),
-			);
+			throw new NotEnoughBalanceError(ethers.formatUnits(usdcBalance, decimals), totalPrice);
 		}
 
 		let cardConfig = await this.zebecCard.cardConfig();
@@ -417,14 +803,17 @@ export class ZebecCardEvmService {
 		if (this.sandbox) {
 			console.debug("Purchase hash: %s \n", buyCardReceipt.hash);
 		}
-		const usdAmount = Money.create(quote.outputAmount, quote.targetCurrency);
+		const usdAmount = Money.create(
+			quote.outputAmount ?? quote.targetAmount ?? params.amount,
+			quote.targetCurrency,
+		);
 		const buyer = await this.signer.getAddress();
 		const receipt = new Receipt(
 			params.quote,
 			new Deposit(
 				this.chainId,
 				"USDC",
-				quote.totalPrice,
+				totalPrice,
 				buyCardReceipt.hash,
 				buyCardReceipt.hash,
 				buyCardReceipt.blockHash,

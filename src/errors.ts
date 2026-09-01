@@ -55,3 +55,11 @@ export class ValidationError extends Error {
 		super(message);
 	}
 }
+
+/** Raised when a DEX-routed token quote cannot be used for execution. */
+export class SwapQuoteUnavailableError extends Error {
+	constructor(message = "No swap quote available. Please fetch a fresh quote and try again.") {
+		super(message);
+		this.name = "SwapQuoteUnavailableError";
+	}
+}
