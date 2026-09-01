@@ -344,6 +344,11 @@ export class ZebecCardEvmService {
 		token?: CardToken;
 		cardProgramId: string;
 		recipient: Recipient;
+		/**
+		 * Client-stable key reserved for retrying the future backend intent flow.
+		 * Version 1.1 does not yet submit this value to the card API.
+		 */
+		idempotencyKey?: string;
 		overrides?: ethers.Overrides;
 	}): Promise<{ receipt: ethers.ContractTransactionReceipt; orderDetail: OrderWithExtraInfo }> {
 		const token = params.token;

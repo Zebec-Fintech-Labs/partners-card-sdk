@@ -165,15 +165,21 @@ The `purchaseCardWithUsdc` method in ZebecCardEvmService returns an object repon
 1. **receipt**: Transaction receipt of card purchase.
 2. **orderDetails**: Card order details like order id, recipient details, currency, card type, etc.
 
-`purchaseCard()` automatically calls `buyCardDirect()` for direct tokens and
-`swapAndBuy()` for tokens whose quote/token metadata enables
-`shouldSwapOnDex`. If swap metadata is missing, it throws
-`SwapQuoteUnavailableError` instead of silently sending the wrong transaction.
+`purchaseCard()` selects the appropriate direct or DEX swap execution path
+from the quote/token metadata. The underlying contract method is an
+implementation detail and may evolve as backend-authorized fee execution is
+introduced. If swap metadata is missing, it throws `SwapQuoteUnavailableError`
+instead of silently sending the wrong transaction.
+
+Both EVM and Solana purchase methods accept an optional client-generated
+`idempotencyKey`. Version 1.1 reserves this parameter for the future
+pre-transaction backend intent flow; it is not yet submitted to the card API
+and must not currently be treated as an order-deduplication guarantee.
 
 For Solana, construct a `ZebecCardSolanaService` with a configured
 `ZebecCardV2Service` and call its `fetchQuote()` and `purchaseCard()` methods;
-it routes to `createSilverCard`/`loadCarbonCard` or the corresponding
-`swapAnd*` method.
+it selects the appropriate direct or swap execution path from the supplied
+token and quote metadata.
 
 ---
 
