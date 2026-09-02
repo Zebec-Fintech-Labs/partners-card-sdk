@@ -25,8 +25,8 @@ export const USDC_ADDRESS: Record<SupportedEvmChain, string> = {
 };
 
 export const CARD_API_URL: Record<"Production" | "Sandbox", string> = {
-	Production: "https://partner-api.card.zebec.io",
-	Sandbox: "https://partner-api.dev.zebec.io",
+	Production: "https://api.superapp.zebec.io",
+	Sandbox: "https://dev-super.api.zebec.io",
 };
 
 export const TAO_RPC_URL: Record<"Production" | "Sandbox", string> = {

@@ -34,6 +34,21 @@ type APIConfig = {
 	encryptionKey: string;
 };
 
+/**
+ * Bridge for integrations that orchestrate the Partner API separately from
+ * this SDK's on-chain purchase execution.
+ */
+export type CardPurchaseAPIAdapter = {
+	ping(): Promise<boolean>;
+	fetchZebecCardPrograms(countryCode: CountryCode): Promise<CardProgramWithUserRegion>;
+	purchaseCard(data: OrderCardRequest): Promise<{ data: OrderWithExtraInfo }>;
+};
+
+export type ZebecCardEvmServiceOptions = {
+	sandbox?: boolean;
+	purchaseApiAdapter?: CardPurchaseAPIAdapter;
+};
+
 export class ZebecCardAPIService {
 	readonly apiConfig: APIConfig & {
 		apiUrl: string;
@@ -101,7 +116,7 @@ export class ZebecCardAPIService {
 	// Ping API status
 	async ping() {
 		try {
-			await this.api.get("/ping");
+			await this.api.get("/health");
 			return true;
 		} catch (e) {
 			if (this.sandbox) {
@@ -264,15 +279,14 @@ export class ZebecCardEvmService {
 	readonly usdcToken: ERC20;
 	readonly chainId: SupportedEvmChain;
 	private readonly apiService: ZebecCardAPIService;
+	private readonly purchaseApi: CardPurchaseAPIAdapter;
 	private readonly sandbox: boolean = false;
 
 	constructor(
 		readonly signer: ethers.Signer,
 		chainId: number,
 		apiConfig: APIConfig,
-		sdkOptions?: {
-			sandbox?: boolean;
-		},
+		sdkOptions?: ZebecCardEvmServiceOptions,
 	) {
 		this.sandbox = sdkOptions?.sandbox ? sdkOptions.sandbox : false;
 
@@ -282,6 +296,7 @@ export class ZebecCardEvmService {
 		}
 
 		this.apiService = new ZebecCardAPIService(apiConfig, this.sandbox);
+		this.purchaseApi = sdkOptions?.purchaseApiAdapter || this.apiService;
 
 		this.chainId = parseSupportedChain(chainId);
 
@@ -391,8 +406,8 @@ export class ZebecCardEvmService {
 		overrides?: ethers.Overrides;
 	}): Promise<{ receipt: ethers.ContractTransactionReceipt; orderDetail: OrderWithExtraInfo }> {
 		const { quote } = params;
-		await this.apiService.ping();
-		const cardProgramDetails = await this.apiService.fetchZebecCardPrograms(
+		await this.purchaseApi.ping();
+		const cardProgramDetails = await this.purchaseApi.fetchZebecCardPrograms(
 			params.recipient.countryCode,
 		);
 		const cardProgram = cardProgramDetails.availablePrograms.find(
@@ -484,8 +499,8 @@ export class ZebecCardEvmService {
 		) {
 			throw new SwapQuoteUnavailableError();
 		}
-		await this.apiService.ping();
-		const cardProgramDetails = await this.apiService.fetchZebecCardPrograms(
+		await this.purchaseApi.ping();
+		const cardProgramDetails = await this.purchaseApi.fetchZebecCardPrograms(
 			params.recipient.countryCode,
 		);
 		const cardProgram = cardProgramDetails.availablePrograms.find(
@@ -701,7 +716,7 @@ export class ZebecCardEvmService {
 		let delay = 1000;
 		while (retries < 5) {
 			try {
-				return (await this.apiService.purchaseCard(payload)).data as OrderWithExtraInfo;
+				return (await this.purchaseApi.purchaseCard(payload)).data as OrderWithExtraInfo;
 			} catch (error) {
 				if (retries >= 4) throw error;
 				retries += 1;
@@ -713,7 +728,7 @@ export class ZebecCardEvmService {
 	}
 
 	async fetchZebecCardProgram(countryCode: CountryCode) {
-		return this.apiService.fetchZebecCardPrograms(countryCode);
+		return this.purchaseApi.fetchZebecCardPrograms(countryCode);
 	}
 
 	/**
@@ -730,9 +745,9 @@ export class ZebecCardEvmService {
 	}): Promise<{ receipt: ethers.ContractTransactionReceipt; orderDetail: OrderWithExtraInfo }> {
 		const { quote } = params;
 		// Check card service status
-		await this.apiService.ping();
+		await this.purchaseApi.ping();
 
-		const cardProgramDetails = await this.apiService.fetchZebecCardPrograms(
+		const cardProgramDetails = await this.purchaseApi.fetchZebecCardPrograms(
 			params.recipient.countryCode,
 		);
 
@@ -888,7 +903,7 @@ export class ZebecCardEvmService {
 
 		while (retries < maxRetries) {
 			try {
-				const response = await this.apiService.purchaseCard(payload);
+				const response = await this.purchaseApi.purchaseCard(payload);
 
 				if (this.sandbox) {
 					console.debug("API response: %o \n", response.data);

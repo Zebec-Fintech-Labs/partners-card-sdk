@@ -37,18 +37,19 @@ describe("ZebecCardEvmService backward-compatible purchase routing", () => {
 	};
 
 	const createService = (signer) => {
-		const service = new ZebecCardEvmService(
+		return new ZebecCardEvmService(
 			signer,
 			SupportedEvmChain.Sepolia,
 			{ apiKey: "test-api-key", encryptionKey: "test-encryption-key" },
-			{ sandbox: true },
+			{
+				sandbox: true,
+				purchaseApiAdapter: {
+					ping: async () => true,
+					fetchZebecCardPrograms: async () => programs,
+					purchaseCard: async () => ({ data: { orderId: "order-1" } }),
+				},
+			},
 		);
-		service.apiService = {
-			ping: async () => true,
-			fetchZebecCardPrograms: async () => programs,
-			purchaseCard: async () => ({ data: { orderId: "order-1" } }),
-		};
-		return service;
 	};
 
 	const swapQuote = (minimum = "10") => ({
@@ -100,6 +101,13 @@ describe("ZebecCardEvmService backward-compatible purchase routing", () => {
 
 	afterEach(() => {
 		ERC20__factory.connect = originalConnect;
+	});
+
+	it("uses the configured purchase API adapter for public program lookup", async () => {
+		const service = createService(ethers.Wallet.createRandom());
+		const result = await service.fetchZebecCardProgram("USA");
+
+		assert.strictEqual(result, programs);
 	});
 
 	it("keeps the published purchaseCardWithUsdc call and return shape", async () => {
