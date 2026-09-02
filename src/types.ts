@@ -30,6 +30,40 @@ export type CardProgramWithUserRegion = {
 	currencies: Record<string, number>;
 };
 
+export type SwapQuote = {
+	/** Chain-specific quote returned by the card API (Jupiter, 1inch, etc.). */
+	inputMint?: string;
+	outputMint?: string;
+	inAmount?: string;
+	outAmount?: string;
+	otherAmountThreshold?: string;
+	swapMode?: "ExactIn" | "ExactOut";
+	slippageBps?: number;
+	/** Aggregator-specific transaction data required to build the swap. */
+	rawQuote?: unknown;
+	[key: string]: unknown;
+};
+
+export type EvmSwapData = {
+	dstAmount?: string;
+	ether?: string;
+	from?: string;
+	to?: string;
+	swapParams: {
+		executor: string;
+		description: {
+			srcToken: string;
+			dstToken: string;
+			srcReceiver: string;
+			dstReceiver: string;
+			srcAmount: string;
+			minReturnAmount: string;
+			flags: string;
+		};
+		routeData: string;
+	};
+};
+
 export type Quote = {
 	id: string;
 	quoteType: "EXACT_IN" | "EXACT_OUT";
@@ -46,6 +80,57 @@ export type Quote = {
 	amountRequested: number;
 	pricePerUnitCurrency: number;
 	totalPrice: number;
+	/** New quote response fields used by token-aware card purchases. */
+	sourceToken?: string;
+	targetAmount?: number | string;
+	sourceAmount?: number | string;
+	sourceTokenAddress?: string;
+	chainName?: string;
+	swapQuote?: SwapQuote & { rawQuote?: EvmSwapData | unknown };
+	shouldSwapOnDex?: boolean;
+	/** Optional authoritative execution metadata returned by Partner top-up quotes. */
+	requestedAmount?: { amount: string; currencyCode: string };
+	payment?: PartnerQuotePayment;
+};
+
+export type PartnerQuotePayment = {
+	chain: string;
+	contractAddress: string;
+	tokenAmount: string;
+	tokenDecimals: number;
+	flow?: "SWAP_AND_BUY" | "BUY_CARD_DIRECT";
+	cardContractAddress?: string;
+	outputTokenAddress?: string;
+	outputTokenDecimals?: number;
+	expectedCardLoadAmount?: string;
+	minimumCardLoadAmount?: string;
+};
+
+/** Token metadata required by the automatic purchase router. */
+export type CardToken = {
+	symbol: string;
+	/** EVM contract address or Solana mint address. */
+	address?: string;
+	mintAddress?: string;
+	contractAddress?: string;
+	decimals?: number;
+	shouldSwapOnDex?: boolean;
+	swapConfig?: {
+		shouldSwapOnDex: boolean;
+		swapRoute?: string[];
+		fee?: number;
+	};
+};
+
+export type FetchQuoteParams = {
+	symbol?: string;
+	token?: string;
+	amount: string | number;
+	type?: "EXACT_IN" | "EXACT_OUT";
+	targetCurrency?: string;
+	chainName?: string;
+	platform?: string;
+	slippage?: number;
 };
 
 export type Vault = {
@@ -105,6 +190,8 @@ export class OrderCardRequest {
 
 export class Deposit {
 	chainId: number;
+	chainName?: string;
+	network?: "MAINNET" | "TESTNET";
 	tokenName: string;
 	tokenAmount: number;
 	signature: string;
@@ -117,23 +204,27 @@ export class Deposit {
 	constructor(
 		chainId: number,
 		tokenName: string,
-		tokenAmount: number,
+		tokenAmount: number | string,
 		signature: string,
 		txHash: string,
 		blockHash: string,
 		buyerAddress: string,
 		userEmail: string,
 		paymentId: string,
+		chainName?: string,
+		network?: "MAINNET" | "TESTNET",
 	) {
 		this.chainId = chainId;
 		this.tokenName = tokenName;
-		this.tokenAmount = tokenAmount;
+		this.tokenAmount = tokenAmount as number;
 		this.signature = signature;
 		this.txHash = txHash;
 		this.blockHash = blockHash;
 		this.buyerAddress = buyerAddress;
 		this.userEmail = userEmail;
 		this.paymentId = paymentId;
+		this.chainName = chainName;
+		this.network = network;
 	}
 }
 
